@@ -1,48 +1,141 @@
 package org.example;
 
 import com.google.auto.service.AutoService;
+import com.squareup.javapoet.*;
+import com.sun.tools.javac.code.Type;
 import dev.xethh.utils.WrappedResult.matching.ItemTransformer;
+import io.vavr.Tuple;
+import io.vavr.Tuple2;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
+import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
-import javax.lang.model.element.TypeParameterElement;
-import javax.lang.model.type.ExecutableType;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 import java.io.IOException;
-import java.io.PrintWriter;
-import java.util.List;
+import java.io.Writer;
+import java.text.Normalizer;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @SupportedAnnotationTypes("org.example.FormBuilder")
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
 @AutoService(FormBuilder.class)
 public class FormProcessor extends AbstractProcessor {
+    static Function<String, String> upperFirstChar =
+            (String s) -> ItemTransformer.transfer(String.class, String.class)
+                    .inCase(it -> it.length() == 0 || it.length() == 1).thenValue(s)
+                    .defaultValueTransform(str -> String.format("%s%s", str.substring(0, 0), str.substring(1)))
+                    .matches(s);
+
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-        for (TypeElement typeElement : annotations) {
-            Set<? extends Element> annotatedElements = roundEnv.getElementsAnnotatedWith(typeElement);
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Executed processor -------------------------");
+        for (TypeElement annotation : annotations) {
+            Set<? extends Element> annotatedElements = roundEnv.getElementsAnnotatedWith(annotation);
             Set<? extends Element> lists = annotatedElements;
             for (Element e : lists) {
                 String packageName = e.getEnclosingElement().toString();
                 String className = e.getSimpleName().toString();
+                String builderName = String.format("%sBuilder", className);
+                String fullPathName = String.format("%s.%s", packageName, builderName);
+
+                Map<String, ? extends AnnotationValue> map = e.getAnnotationMirrors()
+                        .get(0)
+                        .getElementValues()
+                        .entrySet().stream()
+                        .collect(Collectors.toMap(it -> it.getKey().toString(), Map.Entry::getValue));
+
+                AnnotationValue field1 = map.get("field1()");
+                AnnotationValue field2 = map.get("field2()");
+                AnnotationValue field3 = map.get("field3()");
+
+//                TypeName personTypeName = TypeName.get(e.asType());
+                TypeName field1TypeName = TypeName.get((Type) field1.getValue());
+                TypeName field2TypeName = TypeName.get((Type) field2.getValue());
+                TypeName field3TypeName = TypeName.get((Type) field3.getValue());
+
                 processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Found package: " + packageName);
                 processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Found form: " + className);
 
-                ClassLoader systemClassLoader = ClassLoader.getSystemClassLoader();
-                List<? extends TypeParameterElement> typeParam = typeElement.getTypeParameters();
-//                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Field1: "+formBuilder.field1().getName());
-//                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Field2: "+formBuilder.field2().getName());
-//                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Field3: "+formBuilder.field3().getName());
+                FieldSpec field1Spec = FieldSpec.builder(field1TypeName, "field1", Modifier.PRIVATE).build();
+                FieldSpec field2Spec = FieldSpec.builder(field2TypeName, "field2", Modifier.PRIVATE).build();
+                FieldSpec field3Spec = FieldSpec.builder(field3TypeName, "field3", Modifier.PRIVATE).build();
+                MethodSpec method1Setter = FormProcessor.createSetter(Tuple.of(field1TypeName, field1Spec));
+                MethodSpec method2Setter = FormProcessor.createSetter(Tuple.of(field2TypeName, field2Spec));
+                MethodSpec method3Setter = FormProcessor.createSetter(Tuple.of(field3TypeName, field3Spec));
+                MethodSpec method1Getter = FormProcessor.createGetter(Tuple.of(field1TypeName, field1Spec));
+                MethodSpec method2Getter = FormProcessor.createGetter(Tuple.of(field2TypeName, field2Spec));
+                MethodSpec method3Getter = FormProcessor.createGetter(Tuple.of(field3TypeName, field3Spec));
+
+                MethodSpec main = MethodSpec.methodBuilder("main")
+                        .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+                        .returns(void.class)
+                        .addParameter(String[].class, "args")
+                        .addStatement("$T.out.println($S)", System.class, "Hello, JavaPoet!")
+                        .build();
+
+                TypeSpec helloWorld = TypeSpec.classBuilder(className + "Builder")
+                        .addJavadoc("Generated by FormProcessor")
+                        .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
+                        .addField(field1Spec)
+                        .addField(field2Spec)
+                        .addField(field3Spec)
+                        .addMethod(method1Setter)
+                        .addMethod(method2Setter)
+                        .addMethod(method3Setter)
+                        .addMethod(method1Getter)
+                        .addMethod(method2Getter)
+                        .addMethod(method3Getter)
+                        .addMethod(main)
+                        .build();
+
+                JavaFile javaFile = JavaFile.builder(packageName, helloWorld)
+                        .build();
+
+                try {
+                    JavaFileObject builderFile = processingEnv.getFiler().createSourceFile(fullPathName);
+                    try (
+                            Writer writer = builderFile.openWriter();
+                    ) {
+                        javaFile.writeTo(writer);
+                        writer.flush();
+                    } catch (IOException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
             }
         }
         return true;
+    }
+
+    private static MethodSpec createGetter(Tuple2<TypeName, FieldSpec> tuple) {
+        TypeName typeName = tuple._1;
+        FieldSpec fieldSpec = tuple._2;
+        return MethodSpec.methodBuilder(String.format("%s%s", "get", FormProcessor.upperFirstChar.apply(fieldSpec.name)))
+                .returns(typeName)
+                .addModifiers(Modifier.PUBLIC)
+                .addStatement("return $L", fieldSpec.name)
+                .build();
+    }
+
+    private static MethodSpec createSetter(Tuple2<TypeName, FieldSpec> tuple) {
+        TypeName typeName = tuple._1;
+        FieldSpec fieldSpec = tuple._2;
+        return MethodSpec.methodBuilder(String.format("%s%s", "set", FormProcessor.upperFirstChar.apply(fieldSpec.name)))
+                .addModifiers(Modifier.PUBLIC)
+                .addParameter(ParameterSpec.builder(typeName, fieldSpec.name).build())
+                .addStatement("this.$L = $L", fieldSpec.name, fieldSpec.name)
+                .build();
     }
 }
