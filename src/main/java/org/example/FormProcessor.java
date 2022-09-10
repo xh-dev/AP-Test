@@ -3,9 +3,7 @@ package org.example;
 import com.google.auto.service.AutoService;
 import com.squareup.javapoet.*;
 import com.sun.tools.javac.code.Type;
-import dev.xethh.utils.WrappedResult.matching.ItemTransformer;
 import io.vavr.Tuple;
-import io.vavr.Tuple2;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.RoundEnvironment;
@@ -20,21 +18,17 @@ import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 import java.io.IOException;
 import java.io.Writer;
-import java.text.Normalizer;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
+
+import static org.example.extraBuilder.GenerationConfig.createGetter;
+import static org.example.extraBuilder.GenerationConfig.createSetter;
 
 @SupportedAnnotationTypes("org.example.FormBuilder")
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
 @AutoService(FormBuilder.class)
 public class FormProcessor extends AbstractProcessor {
-    static Function<String, String> upperFirstChar =
-            (String s) -> ItemTransformer.transfer(String.class, String.class)
-                    .inCase(it -> it.length() == 0 || it.length() == 1).thenValue(s)
-                    .defaultValueTransform(str -> String.format("%s%s", str.substring(0, 0), str.substring(1)))
-                    .matches(s);
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
@@ -69,12 +63,12 @@ public class FormProcessor extends AbstractProcessor {
                 FieldSpec field1Spec = FieldSpec.builder(field1TypeName, "field1", Modifier.PRIVATE).build();
                 FieldSpec field2Spec = FieldSpec.builder(field2TypeName, "field2", Modifier.PRIVATE).build();
                 FieldSpec field3Spec = FieldSpec.builder(field3TypeName, "field3", Modifier.PRIVATE).build();
-                MethodSpec method1Setter = FormProcessor.createSetter(Tuple.of(field1TypeName, field1Spec));
-                MethodSpec method2Setter = FormProcessor.createSetter(Tuple.of(field2TypeName, field2Spec));
-                MethodSpec method3Setter = FormProcessor.createSetter(Tuple.of(field3TypeName, field3Spec));
-                MethodSpec method1Getter = FormProcessor.createGetter(Tuple.of(field1TypeName, field1Spec));
-                MethodSpec method2Getter = FormProcessor.createGetter(Tuple.of(field2TypeName, field2Spec));
-                MethodSpec method3Getter = FormProcessor.createGetter(Tuple.of(field3TypeName, field3Spec));
+                MethodSpec method1Setter = createSetter(Tuple.of(field1TypeName, field1Spec)).build();
+                MethodSpec method2Setter = createSetter(Tuple.of(field2TypeName, field2Spec)).build();
+                MethodSpec method3Setter = createSetter(Tuple.of(field3TypeName, field3Spec)).build();
+                MethodSpec method1Getter = createGetter(Tuple.of(field1TypeName, field1Spec)).build();
+                MethodSpec method2Getter = createGetter(Tuple.of(field2TypeName, field2Spec)).build();
+                MethodSpec method3Getter = createGetter(Tuple.of(field3TypeName, field3Spec)).build();
 
                 MethodSpec main = MethodSpec.methodBuilder("main")
                         .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
@@ -119,23 +113,4 @@ public class FormProcessor extends AbstractProcessor {
         return true;
     }
 
-    private static MethodSpec createGetter(Tuple2<TypeName, FieldSpec> tuple) {
-        TypeName typeName = tuple._1;
-        FieldSpec fieldSpec = tuple._2;
-        return MethodSpec.methodBuilder(String.format("%s%s", "get", FormProcessor.upperFirstChar.apply(fieldSpec.name)))
-                .returns(typeName)
-                .addModifiers(Modifier.PUBLIC)
-                .addStatement("return $L", fieldSpec.name)
-                .build();
-    }
-
-    private static MethodSpec createSetter(Tuple2<TypeName, FieldSpec> tuple) {
-        TypeName typeName = tuple._1;
-        FieldSpec fieldSpec = tuple._2;
-        return MethodSpec.methodBuilder(String.format("%s%s", "set", FormProcessor.upperFirstChar.apply(fieldSpec.name)))
-                .addModifiers(Modifier.PUBLIC)
-                .addParameter(ParameterSpec.builder(typeName, fieldSpec.name).build())
-                .addStatement("this.$L = $L", fieldSpec.name, fieldSpec.name)
-                .build();
-    }
 }
